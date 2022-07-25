@@ -1,0 +1,180 @@
+#include <Servo.h>
+#include <SPI.h>
+#include <Encoder.h>
+
+//DA出力のためのピン指定
+#define SCLK 18
+#define MOSI 23
+#define MISO 19
+#define CS 5
+
+//sin関数のため
+#define PI 3.141592653589793
+#define TIME_US 1000000.0  //これで割ればμsをsに直せる
+
+//ループのため
+#define REFRESH_TIME_US 100  //ループの一周の秒数 単位はμ ループは10kHzにするために1/10000,100μs
+
+long time_us;         //一周のループの秒数をそろえるために時間を記録する変数
+
+//sin関数の為
+long time_sin_us = 0.0;   //sin関数を計算するために使う時間の変数
+float ampA = 300.0;
+float expB = 90.0;
+float freq = 300.0;
+
+//エンコーダーのため
+int incomingByte;
+float velo = 1.0;      //デバイスの速度
+
+//ハプチュエーターのため
+float vA = 2.5;
+int vibration = 0;
+
+//触覚提示した瞬間
+int touch = 0;
+
+Encoder myEnc(16, 17);
+Servo myservo;
+
+void DAout(char channel, float voltage);
+
+void setup() {
+  Serial.begin(9600);
+  SPI.begin(SCLK, MISO, MOSI, CS);
+  SPI.setFrequency(20000000);
+  SPI.setDataMode(SPI_MODE0);
+  SPI.setHwCs(true);
+
+  myservo.attach(2);
+}
+
+//エンコーダーの記録のため
+long oldPosition = 0;
+long oldoldPosition = 0;
+long newPosition = 0;
+
+//サーボ制御のため
+int servoangle = 0;
+
+void loop() {
+  time_us = micros();
+
+  //エンコーダーの値
+  newPosition = myEnc.read();
+  if (newPosition != oldPosition) {
+    oldoldPosition = oldPosition;
+    oldPosition = newPosition;
+  }
+
+  //ゴム、木、アルミの切り替え
+  char s;
+  if(Serial.available()>0){
+    s = Serial.read();
+    if(s=='r'){
+      //ゴムの特性
+      ampA = 240.0;
+      expB = 60.0;
+      freq = 30.0;
+      Serial.println('r');
+    }
+    if(s=='w'){
+      //木の特性
+      ampA = 150.0;
+      expB = 80.0;
+      freq = 100.0;
+      Serial.println('w');
+    }
+    if(s=='a'){
+      //アルミの特性
+      ampA = 300.0;
+      expB = 90.0;
+      freq = 300.0;
+      Serial.println('a');
+    }
+    if(s=='n'){
+      //アルミの特性
+      ampA = 0.0;
+      expB = 0.0;
+      freq = 0.0;
+      Serial.println('n');
+    }
+    if(s=='e'){
+      //エンコーダーの値出力      
+      Serial.println('e');
+      Serial.println(oldPosition);
+      Serial.println(oldoldPosition);
+    }
+    if(s=='v'){
+      //速度出力   
+      Serial.println('v');
+      Serial.println(velo);
+    }
+    if(s=='p'){
+      //サーボ角度
+      servoangle += 10;
+      Serial.println('p');
+      if(servoangle > 180)servoangle = 180;
+      myservo.write(servoangle);
+    }
+    if(s=='l'){
+      //サーボ角度
+      servoangle -= 10;
+      Serial.println('l');
+      if(servoangle < 0)servoangle = 0;
+      myservo.write(servoangle);
+    }
+    if(s=='g'){
+      //サーボ角度
+      Serial.println('g');
+      myservo.write(0);
+    }
+    if(s=='h'){
+      //サーボ角度
+      Serial.println('h');
+      myservo.write(60);
+    }
+    if(s=='j'){
+      //サーボ角度
+      Serial.println('j');
+      myservo.write(120);
+    }
+    if(s=='k'){
+      //サーボ角度
+      Serial.println('k');
+      myservo.write(180);
+    }
+  }
+
+  //ハプチュエーターを動かすため
+  if(newPosition <= 0){
+    if(vibration == 0){
+      time_sin_us = 0.0;
+      touch = 1;
+    }
+    vibration = 1;
+  }
+  vA = ((ampA * velo * exp(- expB * time_sin_us / TIME_US) * sin(2 * PI * freq * time_sin_us / TIME_US)) / 300.0) * 2.5  + 2.5;
+  DAout(0, vA);
+
+  if(newPosition > 20 && vibration == 1)vibration = 0;
+
+  if(time_sin_us < 100000)time_sin_us += REFRESH_TIME_US;
+
+  //シリアル通信でvisualstudioに送るところ
+  Serial.write(newPosition>>8);
+  Serial.write(newPosition&0xFF);
+  Serial.write(touch>>8);
+  Serial.write(touch&0xFF);
+  touch = 0;
+
+  while((micros() - time_us) < REFRESH_TIME_US); //1ループの秒数をそろえる
+}
+
+
+void DAout(char channel, float voltage) {
+  short spiData, DA;
+  DA = (voltage / 5.0) * 4095;
+  spiData = ((channel << 15) | (0x07 << 12) | (DA & 0x0FFF));
+  SPI.transfer16(spiData);
+}
