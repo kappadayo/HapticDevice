@@ -1,0 +1,99 @@
+#include<stdio.h>
+#include<Windows.h>
+#include<tchar.h>
+#include"Serial.h"
+#include "DxLib.h"
+
+#define SERIAL_PORT "COM3"
+CSerial serial;
+
+int serial_init(void) {
+	//シリアルポートのオープン
+	if (serial.Open(_T(SERIAL_PORT), 0, 0, false) != 0)return -1;
+	//通信速度を9600bpsに設定
+	serial.Setup(CSerial::EBaud9600);
+	//全データがそろう前まで待ち続けるよう設定
+	serial.SetupReadTimeouts(CSerial::EReadTimeoutBlocking);
+	return 0;
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+{
+	ChangeWindowMode(TRUE); //ウィンドウモードに設定
+	if (DxLib_Init() == -1)		// ＤＸライブラリ初期化処理
+	{
+		return -1;			// エラーが起きたら直ちに終了
+	}
+
+	// 描画先画面を裏画面にセット
+	SetDrawScreen(DX_SCREEN_BACK);
+
+	//視覚に提示する画像のロード
+	int MetalGraph = LoadGraph("画像/01_アルミ.png");
+	int RubberGraph = LoadGraph("画像/02_ゴム.png");
+	int SpongeGraph = LoadGraph("画像/03_スポンジ.png");
+	int WoodGraph = LoadGraph("画像/04_木.png");
+
+	//シリアルポートでやり取りするデータの設定
+	unsigned short sX, SY, sZ, sE, sT;
+	unsigned char rcvBuffer[6];
+
+	//画面の表示　回答時間
+	int answer = 0;
+	LONGLONG react_time;
+
+	if (serial_init() != 0) {
+		printf("シリアルポートを開けません\n");
+		return -1;
+	}
+
+	//ループ
+	while(CheckHitKey(KEY_INPUT_ESCAPE) == 0) {
+		// 画面を初期化する
+		ClearDrawScreen();
+
+		//スタイラスが物体を叩いた瞬間を受け取る
+		//エンコーダの値も受け取る
+		//シリアル通信から4バイト読む
+		serial.Read(rcvBuffer, 4);
+		//シリアル通信から得たデータを整理する
+		sE = (rcvBuffer[0] << 8) | rcvBuffer[1];
+		sT = (rcvBuffer[2] << 8) | rcvBuffer[3];
+		//プリントする
+		printf("E:%4d, T:%4d", sE, sT);
+		DrawFormatString(0, 0, GetColor(255, 255, 255), "sE %d  sT %d ", sE, sT);
+
+		//エンコーダの値からデバイスと画面のスタイラスの動きを同期させる
+		DrawPixel(320, 240, GetColor(255, 255, 255));
+
+		//物体を叩いた瞬間の処理
+		if (sT == 1) {
+			answer = 1;
+			react_time = GetNowHiPerformanceCount();
+		}
+		if (answer == 1)
+		{
+			//画像を画面に表示する
+			DrawGraph(50, 300, MetalGraph, TRUE);
+			DrawGraph(150, 300, RubberGraph, TRUE);
+			DrawGraph(250, 300, SpongeGraph, TRUE);
+			DrawGraph(350, 300, WoodGraph, TRUE);
+			//回答ボタンを提示し回答時間を記録する
+			if (CheckHitKey(KEY_INPUT_1) == 1) {
+				react_time = GetNowHiPerformanceCount() - react_time;
+			}
+		}
+		DrawFormatString(50, 50, GetColor(255, 255, 255), "react %lld ", react_time);
+
+		//サーボモーターの回転
+
+		// 裏画面の内容を表画面に反映させる
+		ScreenFlip();
+	}
+
+	WaitKey();				// キー入力待ち
+
+	DxLib_End();				// ＤＸライブラリ使用の終了処理
+
+	return 0;				// ソフトの終了 
+}
